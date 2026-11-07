@@ -1,0 +1,27 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+
+# Virtual environments
+.venv/
+db/
+
+# Environment variables (contains API keys - do not commit)
+.env
+
+# Virtual Environments & Packages
+voice-env/
+
+# Large Audio, Model Binaries, and Archives
+models/
+*.tar.gz
+*.wav
+*.png
+
+# Temporary Backup Files & System Junk
+*.bak
+.DS_Store

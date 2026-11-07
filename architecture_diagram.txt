@@ -1,0 +1,73 @@
+╔═══════════════════════════════════════════════════════════════════════════════════╗
+║  VOICE SPEND MANAGER — ARCHITECTURE (EC2 SELF-HOSTED)                        ║
+║  Designed for 10K users | Economical | Container-ready                      ║
+╚═══════════════════════════════════════════════════════════════════════════════════╝
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                          CLIENT LAYER (Browser / Mobile)                    │
+│  Mic Input → Silero VAD (ONNX/WASM) → audio buffered only when speech       │
+│  detected → reduces STT load by ~85%                                        │
+└─────────────────────────────────────────────────────────────────────────────┘
+                              │ HTTPS / WSS
+                              ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                     API GATEWAY (FastAPI + Nginx / Traefik)                 │
+│  Rate Limiting (Redis) | Auth (JWT) | CORS | Request ID tracing            │
+│  30 RPM per user                                                             │
+└─────────────────────────────────────────────────────────────────────────────┘                              │
+        ┌─────────────────────┼─────────────────────┐
+        ▼                     ▼                     ▼
+┌───────────────┐   ┌───────────────┐   ┌───────────────┐
+│   STT SERVICE │   │  LLM SERVICE  │   │   TTS SERVICE │
+│  Faster-Whisper│   │   Ollama      │   │   Piper TTS   │
+│   (self-hosted)│   │  (self-hosted)│   │  (self-hosted)│
+│   CPU/GPU      │   │  Llama-3.1-8B │   │  CPU-only     │
+│   ~2-5s latency│   │  ~1-3s latency│   │  ~100-300ms   │
+│  $0 per call   │   │  $0 per call  │   │  $0 per call  │
+└───────────────┘   └───────────────┘   └───────────────┘
+        │                     │                     │
+        └─────────────────────┼─────────────────────┘
+                              ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                      APP LOGIC LAYER (FastAPI Endpoints)                    │
+│  POST /api/draft          → Extract expenses (no persist)                   │
+│  POST /api/draft/clarify  → Handle clarification (6 fields)                 │
+│  POST /api/confirm        → Transactional save + idempotency key            │
+│  GET  /api/expenses       → List with filters (user-scoped)                 │
+│  GET/PUT/DELETE /api/expenses/{id}                                          │
+│  POST/GET  /api/budgets   → Budget + 80%/100% warnings                      │
+│  POST /api/voice-query    → Natural language over expenses                  │
+└─────────────────────────────────────────────────────────────────────────────┘
+                              │
+                              ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                      DATA LAYER (PostgreSQL + Redis)                        │
+│  PostgreSQL (Primary DB) | Redis (Cache + Rate Limit + Idempotency keys)   │
+│  Tables: expenses (user-scoped), budgets, users, audit_log                  │
+└─────────────────────────────────────────────────────────────────────────────┘
+                              │
+                              ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                     DEPLOYMENT (Docker Compose on EC2)                      │
+│  Nginx | FastAPI | Ollama | Piper TTS | PostgreSQL | Redis                  │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                     SCALING NOTES (10K USERS)                               │
+│  • Client-side Silero VAD → only ~15% of audio sent to server STT           │
+│  • Faster-Whisper int8 on CPU → ~3-5s per 30s audio                         │
+│  • Ollama Llama-3.1-8B on same EC2 → ~1-3s per LLM call                     │
+│  • PostgreSQL connection pool → handles concurrent writes                   │
+│  • Redis rate limiting → 30 RPM per user prevents abuse                     │
+│  • Horizontal scale: add more FastAPI + Ollama containers behind Nginx      │
+│  • Zero per-API fees — only EC2 infrastructure cost                         │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+ARCHITECTURE DECISIONS (FIXED — WILL NOT CHANGE):
+├── STT:    Faster-Whisper (self-hosted on EC2) — NOT cloud Whisper API
+├── LLM:    Ollama (self-hosted on EC2) — NOT Groq/OpenAI cloud API
+├── TTS:    Piper TTS (self-hosted on EC2) — NOT Azure/Google TTS
+├── VAD:    Silero VAD (client-side ONNX) — reduces server load
+├── DB:     PostgreSQL (NOT SQLite for production 10K users)
+├── Cache:  Redis (rate limiting + idempotency)
+└── Auth:   JWT-based (replace "local-user" placeholder)
